@@ -1,0 +1,16 @@
+# Riftbound Assets - Models
+# Place 3D model files (.obj, .fbx, .blend) here
+
+# Fighter models:
+# - agile_hero.obj
+# - grappler.obj  
+# - zoner.obj
+# - aerial_fighter.obj
+
+# Stage/arena models:
+# - arena.obj
+# - background.obj
+
+# Effect models:
+# - hit_spark.obj
+# - projectile.obj
