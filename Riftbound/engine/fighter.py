@@ -68,6 +68,8 @@ class Fighter(Entity):
 
         self.max_health = 100
         self.health = 100
+        # Health bar (position set by game setup)
+        self.health_bar = None
 
         # ----------------------------------------------------
         # COMBAT STATE MACHINE
@@ -147,9 +149,6 @@ class Fighter(Entity):
             self.animate_scale((1, 2, 1), duration=duration/2, delay=duration/2, curve='out_expo')
         except Exception:
             pass
-
-        # Health bar (position set by game setup)
-        self.health_bar = None
 
     # ========================================================
     # STATE MANAGEMENT
