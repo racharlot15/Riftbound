@@ -1,0 +1,43 @@
+# Riftbound Assets - Sounds
+# Place audio files here (.wav, .ogg, .mp3)
+
+# Sound effects:
+# sfx/
+#   light_hit.wav
+#   medium_hit.wav
+#   heavy_hit.wav
+#   launcher_hit.wav
+#   block.wav
+#   jump.wav
+#   land.wav
+#   dash.wav
+#   combo_2.wav
+#   combo_3.wav
+#   combo_4+.wav
+#   ko.wav
+#   round_start.wav
+#   round_end.wav
+#   menu_select.wav
+#   menu_confirm.wav
+
+# Voice lines (per character):
+# voices/
+#   agile_hero/
+#     attack_01.wav - attack_05.wav
+#     hit_01.wav - hit_03.wav
+#     ko.wav
+#     taunt.wav
+#   grappler/
+#     ...
+#   zoner/
+#     ...
+#   aerial_fighter/
+#     ...
+
+# Music:
+# music/
+#   main_menu.ogg
+#   stage_arena.ogg
+#   stage_dojo.ogg
+#   stage_rooftop.ogg
+#   results_screen.ogg

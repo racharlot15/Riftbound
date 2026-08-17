@@ -1,0 +1,43 @@
+# Riftbound Assets - Textures
+# Place image files here (.png, .jpg, .tga)
+
+# UI textures:
+# ui/
+#   health_bar_green.png
+#   health_bar_yellow.png
+#   health_bar_red.png
+#   health_bar_bg.png
+#   main_menu_bg.png
+#   character_portraits/
+#     agile_hero.png
+#     grappler.png
+#     zoner.png
+#     aerial_fighter.png
+#   icons/
+#     icon_light.png
+#     icon_medium.png
+#     icon_heavy.png
+#     icon_launcher.png
+#     icon_block.png
+
+# Character textures:
+# characters/
+#   agile_hero_diffuse.png
+#   agile_hero_normal.png
+#   grappler_diffuse.png
+#   zoner_diffuse.png
+#   aerial_fighter_diffuse.png
+
+# Stage textures:
+# stages/
+#   arena_floor.png
+#   arena_wall.png
+#   dojo_floor.png
+#   rooftop_floor.png
+
+# Effects:
+# effects/
+#   hit_spark.png
+#   projectile_trail.png
+#   speed_lines.png
+#   dust_cloud.png

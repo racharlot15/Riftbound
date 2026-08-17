@@ -1,0 +1,23 @@
+# Riftbound Assets - Animations
+# Place animation data files here
+
+# Animation formats supported by Ursina:
+# - .anim (Ursina native)
+# - Embedded in .obj/.fbx models
+
+# Fighter animations:
+# idle.anim
+# walk.anim
+# jump.anim
+# light_attack.anim
+# medium_attack.anim
+# heavy_attack.anim
+# launcher.anim
+# hitstun.anim
+# block.anim
+# ko.anim
+
+# Each animation file contains:
+# - Frame timing
+# - Bone/keyframe transforms
+# - Loop settings
