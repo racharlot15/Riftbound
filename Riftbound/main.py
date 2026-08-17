@@ -22,11 +22,21 @@ Version: 0.1.0 (Modular Architecture)
 import sys
 import os
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path for imports and set cwd to package folder so double-click runs resolve assets
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)
+try:
+    os.chdir(script_dir)
+except Exception:
+    pass
 # Ensure console supports UTF-8 so unicode symbols print correctly on Windows
 try:
     sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+# Helpful debug output for startup issues
+try:
+    print(f"Working directory: {os.getcwd()}")
 except Exception:
     pass
 
