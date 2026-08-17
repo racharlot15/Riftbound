@@ -443,6 +443,8 @@ class DebugHUD(Entity):
         self.debug_text.text = (
             f"STATE: {player_info['state']}\n"
             f"ATTACK: {player_info.get('attack', 'None')}\n"
+            f"LAST ANIM: {player_info.get('last_animation', 'N/A')}\n"
+            f"HEAVY CD: {player_info.get('heavy_cd', 0.0):.2f}s | LAUNCHER CD: {player_info.get('launcher_cd', 0.0):.2f}s\n"
             f"HP: {player_info['health']}/{player_info['max_health']}\n"
             f"ENEMY HP: {enemy_info['health']}/{enemy_info['max_health']}\n"
             f"POS: ({player_info['position'][0]}, {player_info['position'][1]})"

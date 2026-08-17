@@ -62,6 +62,9 @@ class Fighter(Entity):
         # Keep a fallback animator as a soft fallback (non-skeletal)
         self.animator = None
 
+        # Last played animation clip or animator key (for debug overlay)
+        self.last_animation = None
+
         # ----------------------------------------------------
         # HEALTH SYSTEM
         # ----------------------------------------------------
@@ -176,12 +179,20 @@ class Fighter(Entity):
                         try:
                             # actor.loop may raise if clip missing; swallow errors
                             self.actor.loop(clip)
+                            try:
+                                self.last_animation = clip
+                            except Exception:
+                                pass
                         except Exception:
                             pass
                 # Fallback to animator (legacy non-skeletal system)
                 elif getattr(self, 'animator', None):
                     try:
                         self.animator.play(new_state)
+                        try:
+                        self.last_animation = new_state
+                        except Exception:
+                        pass
                     except Exception:
                         pass
             except Exception:
@@ -248,7 +259,14 @@ class Fighter(Entity):
                         try:
                             clip = self.animation_clips.get(f"ATTACK_{attack_name}")
                             if clip:
-                                self.actor.play(clip)
+                                try:
+                                    self.actor.play(clip)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.last_animation = clip
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                     elif getattr(self, 'animator', None):
@@ -261,7 +279,14 @@ class Fighter(Entity):
                             }
                             mapped = mapping.get(attack_name)
                             if mapped:
-                                self.animator.play(mapped)
+                                try:
+                                    self.animator.play(mapped)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.last_animation = mapped
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                     # Temporarily shorten active/recovery for chained follow-ups for snappy feel
@@ -454,12 +479,20 @@ class Fighter(Entity):
                                     self.actor.play(clip)
                                 except Exception:
                                     pass
+                                try:
+                                    self.last_animation = clip
+                                except Exception:
+                                    pass
                         elif getattr(self, 'animator', None):
                             mapping = {'LIGHT': 'ATTACK_LIGHT', 'MEDIUM': 'ATTACK_MEDIUM', 'HEAVY': 'ATTACK_HEAVY', 'LAUNCHER': 'ATTACK_LAUNCHER'}
                             mapped = mapping.get(next_attack)
                             if mapped:
                                 try:
                                     self.animator.play(mapped)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.last_animation = mapped
                                 except Exception:
                                     pass
                     except Exception:
@@ -553,7 +586,14 @@ class Fighter(Entity):
                         }
                         mapped = mapping.get(next_attack)
                         if mapped:
-                            self.animator.play(mapped)
+                            try:
+                                self.animator.play(mapped)
+                            except Exception:
+                                pass
+                            try:
+                                self.last_animation = mapped
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                 return 'startup'
@@ -992,7 +1032,11 @@ class Fighter(Entity):
             'position': (round(self.x, 2), round(self.y, 2)),
             'grounded': self.grounded,
             'attack': self.attack_name,
-            'combo': self.combo_count
+            'combo': self.combo_count,
+            'combo_hit_index': getattr(self, 'combo_hit_index', 0),
+            'last_animation': getattr(self, 'last_animation', None),
+            'heavy_cd': getattr(self, 'heavy_cooldown_timer', 0.0),
+            'launcher_cd': getattr(self, 'launcher_cooldown_timer', 0.0)
         }
 
     def clamp_to_arena(self, arena_width):
