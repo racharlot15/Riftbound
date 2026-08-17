@@ -13,7 +13,7 @@ Controls:
 - ✕: Launcher
 - L2: Block
 - Keyboard fallback: A/D=Move, Space=Jump, Q/W/E=Attacks, R=Launcher,
-  F=Block, Shift=Dash, X=Character Special
+  F=Block, Shift=Dash, X=Character Special, S=Crouch
 
 Author: Riftbound Dev Team
 Version: 0.1.0 (Modular Architecture)
@@ -56,6 +56,7 @@ from engine.controller import (
     block_pressed,
     dash_pressed,
     special_pressed,
+    crouch_held,
     store_input_state
 )
 
@@ -219,6 +220,7 @@ def _print_controls():
     print("MOVEMENT:")
     print("  Left Analog / D-PAD L,R: Move")
     print("  D-PAD UP: Jump (tap=short, hold=high)")
+    print("  D-PAD DOWN: Crouch")
     print()
     print("ATTACKS:")
     print("  □ (Cross):   Light Attack")
@@ -230,7 +232,7 @@ def _print_controls():
     print("  L2: Block")
     print()
     print("KEYBOARD FALLBACK:")
-    print("  A/D: Move | Space: Jump | F: Block")
+    print("  A/D: Move | Space: Jump | F: Block | S: Crouch")
     print("  Q: Light | W: Medium | E: Heavy | R: Launcher")
     print("  Shift: Dash | X: Character Special")
     print("-" * 40)
@@ -398,7 +400,19 @@ def update():
     else:
         
         # IDLE, WALK, JUMP states
-        
+
+        # --------------------------------------------------
+        # CROUCH (controller down input or keyboard 's')
+        # --------------------------------------------------
+        controller_crouching = crouch_held()
+        keyboard_crouching = bool(held_keys['s'])
+
+        if (controller_crouching or keyboard_crouching) and player.grounded and player.state not in ("ATTACK", "BLOCK", "HITSTUN"):
+            if not getattr(player, 'is_crouching', False):
+                player.start_crouch()
+        elif getattr(player, 'is_crouching', False):
+            player.stop_crouch()
+
         # Check for block
         if player_blocking and player.grounded:
             player.set_state("BLOCK")
@@ -426,9 +440,9 @@ def update():
             # Process movement
             else:
                 
-                if horizontal != 0:
+                if horizontal != 0 and not getattr(player, 'is_crouching', False):
                     player.move_horizontal(horizontal)
-                else:
+                elif not getattr(player, 'is_crouching', False):
                     player.stop_movement()
 
     # --------------------------------------------------------
@@ -497,6 +511,10 @@ def update():
         if match_active:
             if player is not None and player.state == 'KO':
                 match_active = False
+                try:
+                    enemy.hitbox.hide_hitbox()
+                except Exception:
+                    pass
                 winner = getattr(enemy, 'fighter_name', 'Enemy')
                 try:
                     result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
@@ -504,6 +522,10 @@ def update():
                     result_text = None
             elif enemy is not None and enemy.state == 'KO':
                 match_active = False
+                try:
+                    player.hitbox.hide_hitbox()
+                except Exception:
+                    pass
                 winner = getattr(player, 'fighter_name', 'Player')
                 try:
                     result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
@@ -585,19 +607,19 @@ def input(key):
     # Attacks
     if key == 'q':
         # disallow attacks while crouched for now
-        if player.state != 'CROUCH':
+        if player.state != 'CROUCH' and not getattr(player, 'is_crouching', False):
             player.start_attack("LIGHT")
     
     if key == 'w':
-        if player.state != 'CROUCH':
+        if player.state != 'CROUCH' and not getattr(player, 'is_crouching', False):
             player.start_attack("MEDIUM")
     
     if key == 'e':
-        if player.state != 'CROUCH':
+        if player.state != 'CROUCH' and not getattr(player, 'is_crouching', False):
             player.start_attack("HEAVY")
 
     if key == 'r':
-        if player.state != 'CROUCH':
+        if player.state != 'CROUCH' and not getattr(player, 'is_crouching', False):
             player.start_attack("LAUNCHER")
 
     if key == 'shift':

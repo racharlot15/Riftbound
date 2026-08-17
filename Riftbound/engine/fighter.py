@@ -97,6 +97,9 @@ class Fighter(Entity):
 
         self.vertical_velocity = 0
         self.grounded = True
+
+        # Crouch state
+        self.is_crouching = False
         
         # Jump system variables
         self.coyote_timer = 0              # Time since leaving ground (for coyote time)
@@ -773,6 +776,38 @@ class Fighter(Entity):
             self.set_state("IDLE")
 
     # ========================================================
+    # CROUCH SYSTEM
+    # ========================================================
+
+    def start_crouch(self):
+        """Enter crouching state (grounded only, not while attacking/stunned/blocking)"""
+        if not self.grounded:
+            return
+        if self.state in ("ATTACK", "HITSTUN", "KO", "BLOCK"):
+            return
+        if self.is_crouching:
+            return
+        self.is_crouching = True
+        self.set_state("IDLE")  # no dedicated CROUCH animation state yet, reuse IDLE
+        try:
+            self.scale_y = 1.2  # visually shrink to show crouch until a real animation exists
+        except Exception:
+            pass
+        print(f"  🔽 {self.fighter_name} crouches")
+
+    def stop_crouch(self):
+        """Exit crouching state"""
+        if not self.is_crouching:
+            return
+        self.is_crouching = False
+        try:
+            self.scale_y = 2  # restore standing height
+        except Exception:
+            pass
+        if self.grounded and self.state not in ("ATTACK", "HITSTUN", "KO", "BLOCK"):
+            self.set_state("IDLE")
+
+    # ========================================================
     # JUMP PHYSICS SYSTEM
     # ========================================================
 
@@ -988,6 +1023,19 @@ class Fighter(Entity):
         except Exception:
             pass
         self.last_animation = None
+        # reset crouch state
+        try:
+            if getattr(self, 'is_crouching', False):
+                self.stop_crouch()
+        except Exception:
+            pass
+        # make sure a hitbox left visible from the previous match's
+        # final hit doesn't persist into the next one
+        try:
+            if getattr(self, 'hitbox', None):
+                self.hitbox.hide_hitbox()
+        except Exception:
+            pass
         # reset visuals
         try:
             if getattr(self, 'health_bar', None):
@@ -997,7 +1045,6 @@ class Fighter(Entity):
                     pass
         except Exception:
             pass
-
 
     def clamp_to_arena(self, arena_width):
         """Keep fighter within arena boundaries and apply a small elastic bounce when hitting walls.
