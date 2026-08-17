@@ -61,14 +61,26 @@ class AttackHitbox(Entity):
         Returns:
             bool: True if collision detected
         """
-        distance_x = abs(self.x - target.x)
-        distance_y = abs(self.y - target.y)
+        # Use axis-aligned rectangle overlap instead of comparing distances.
+        # The previous calculation added generous fixed padding to both axes,
+        # allowing an attack to connect behind the attacker or above its
+        # visible box.  The hitbox dimensions are set from the attack data
+        # immediately before this method is called.
+        hitbox_width = float(getattr(self, 'scale_x', 0) or range_val)
+        hitbox_height = float(getattr(self, 'scale_y', 0) or height_val)
+        target_width = float(getattr(target, 'scale_x', 1.2) or 1.2)
+        target_height = float(getattr(target, 'scale_y', 2.0) or 2.0)
 
-        # Check if within hitbox bounds (accounting for target body size)
-        hit_threshold_x = range_val / 2 + 0.6   # Target body half-width
-        hit_threshold_y = height_val / 2 + 1     # Target body half-height
+        hitbox_left = self.x - hitbox_width / 2
+        hitbox_right = self.x + hitbox_width / 2
+        hitbox_bottom = self.y - hitbox_height / 2
+        hitbox_top = self.y + hitbox_height / 2
 
-        if distance_x <= hit_threshold_x and distance_y <= hit_threshold_y:
-            return True
-        
-        return False
+        target_left = target.x - target_width / 2
+        target_right = target.x + target_width / 2
+        target_bottom = target.y - target_height / 2
+        target_top = target.y + target_height / 2
+
+        overlaps_x = hitbox_left <= target_right and hitbox_right >= target_left
+        overlaps_y = hitbox_bottom <= target_top and hitbox_top >= target_bottom
+        return overlaps_x and overlaps_y

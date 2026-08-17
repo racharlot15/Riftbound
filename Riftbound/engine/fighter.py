@@ -545,7 +545,8 @@ class Fighter(Entity):
             from .combat import get_combo_scaling
             attacker_index = getattr(attacker, 'combo_hit_index', 0) if attacker is not None else 0
             scaling = get_combo_scaling(attacker_index)
-            scaled_damage = max(1, int(data.get('damage', 0) * scaling))
+            damage_multiplier = getattr(attacker, 'DAMAGE_MULTIPLIER', 1.0)
+            scaled_damage = max(1, int(data.get('damage', 0) * scaling * damage_multiplier))
         except Exception:
             scaled_damage = data.get('damage', 0)
 
@@ -553,6 +554,7 @@ class Fighter(Entity):
             from .combat import calculate_block_damage
             damage = calculate_block_damage(scaled_damage)
             self.health -= damage
+            self.health = max(0, self.health)
             # Play block impact audio
             try:
                 from .audio import sound_manager
@@ -560,6 +562,15 @@ class Fighter(Entity):
             except Exception:
                 pass
             print(f"  🛡️ {self.fighter_name} blocked! ({damage} damage)")
+            # A small freeze/shake confirms that the attack connected even
+            # though it was defended, without competing with a normal hit.
+            try:
+                from engine import juice
+                from engine.camera import trigger_shake
+                juice.trigger_hitstop(0.025)
+                trigger_shake(strength=0.045, duration=0.08)
+            except Exception:
+                pass
             # spawn small grey damage popup for blocked hits
             try:
                 from ui.damage_popup import spawn_damage_popup
@@ -567,6 +578,10 @@ class Fighter(Entity):
                 spawn_damage_popup(damage, self.x, self.y, col=ursina_color.gray, scale=2)
             except Exception:
                 pass
+            if self.health_bar:
+                self.health_bar.update_health(self.health, self.max_health)
+            if self.health <= 0:
+                self.set_state("KO")
             return
 
         # APPLY DAMAGE (scaled)
@@ -597,11 +612,11 @@ class Fighter(Entity):
             from engine.camera import trigger_shake
             try:
                 atk_key = getattr(attacker, 'attack_name', None)
-                strength_map = {'LIGHT': 0.05, 'MEDIUM': 0.12, 'HEAVY': 0.25, 'LAUNCHER': 0.25}
+                strength_map = {'LIGHT': 0.08, 'MEDIUM': 0.14, 'HEAVY': 0.24, 'LAUNCHER': 0.28}
                 strength = strength_map.get(atk_key, min(0.05 + data.get('damage', 0) * 0.01, 0.25))
-                trigger_shake(strength=strength, duration=0.12)
+                trigger_shake(strength=strength, duration=0.18)
             except Exception:
-                trigger_shake(strength=0.08, duration=0.12)
+                trigger_shake(strength=0.10, duration=0.18)
 
             # Screen flash for heavy/launcher
             try:
@@ -680,7 +695,7 @@ class Fighter(Entity):
 
         # UPDATE HEALTH BAR
         if self.health_bar:
-            self.health_bar.update_health(self.health)
+            self.health_bar.update_health(self.health, self.max_health)
 
         # CHECK FOR K.O.
         if self.health <= 0:
@@ -806,6 +821,7 @@ class Fighter(Entity):
 
         # First jump uses full force, subsequent mid-air jumps slightly reduced for balance
         force = JUMP_FORCE if self.jumps_used == 1 else JUMP_FORCE * 0.9
+        force *= getattr(self, "JUMP_MULTIPLIER", 1.0)
         self.vertical_velocity = max(self.vertical_velocity, force)
         
         # Enable variable height jumping only for primary jump

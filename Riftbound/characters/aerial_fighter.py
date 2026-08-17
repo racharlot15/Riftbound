@@ -9,7 +9,7 @@ Stats:
 - Special: Multi-jump, Air combos, Fast fall
 """
 
-from engine.fighter import Fighter, MOVE_SPEED, AIR_MOVE_SPEED, GRAVITY, MAX_FALL_SPEED
+from engine.fighter import Fighter, MOVE_SPEED, AIR_MOVE_SPEED, GRAVITY, MAX_FALL_SPEED, JUMP_BUFFER_TIME
 
 
 class AerialFighter(Fighter):
@@ -115,7 +115,7 @@ class AerialFighter(Fighter):
         
         # Buffer if nothing else works
         if self.state != "KO":
-            self.jump_buffer_timer = self.JUMP_BUFFER_TIME
+            self.jump_buffer_timer = JUMP_BUFFER_TIME
         return False
 
     def _execute_air_jump(self):

@@ -12,7 +12,8 @@ Controls:
 - ○: Heavy Attack
 - ✕: Launcher
 - L2: Block
-- Keyboard fallback: A/D=Move, Space=Jump, Q/W/E=Attacks
+- Keyboard fallback: A/D=Move, Space=Jump, Q/W/E=Attacks, R=Launcher,
+  F=Block, Shift=Dash, X=Character Special
 
 Author: Riftbound Dev Team
 Version: 0.1.0 (Modular Architecture)
@@ -29,7 +30,7 @@ try:
 except Exception:
     pass
 
-from ursina import Ursina, window, camera, time, Entity, Text, AmbientLight, DirectionalLight, color
+from ursina import Ursina, window, camera, time, Entity, Text, AmbientLight, DirectionalLight, color, held_keys
 
 # Import engine modules
 from engine.controller import (
@@ -43,6 +44,8 @@ from engine.controller import (
     heavy_pressed,
     launcher_pressed,
     block_pressed,
+    dash_pressed,
+    special_pressed,
     store_input_state
 )
 
@@ -90,6 +93,12 @@ debug_hud = None
 # Game state flags
 game_running = True
 paused = False
+
+# Lightweight deterministic CPU state. This keeps the prototype playable
+# while a full behavior-tree AI remains out of scope.
+enemy_ai_timer = 0.0
+enemy_ai_attack_index = 0
+enemy_ai_block_timer = 0.0
 
 
 # ============================================================
@@ -193,9 +202,72 @@ def _print_controls():
     print("  L2: Block")
     print()
     print("KEYBOARD FALLBACK:")
-    print("  A/D: Move | Space: Jump")
-    print("  Q: Light | W: Medium | E: Heavy")
+    print("  A/D: Move | Space: Jump | F: Block")
+    print("  Q: Light | W: Medium | E: Heavy | R: Launcher")
+    print("  Shift: Dash | X: Character Special")
     print("-" * 40)
+
+
+def _facing_direction(fighter, opponent):
+    """Return the horizontal direction from fighter toward opponent."""
+    return 1 if opponent.x >= fighter.x else -1
+
+
+def _use_character_special(fighter, opponent, direction=0):
+    """Run the archetype-specific move bound to the special input."""
+    direction = direction or _facing_direction(fighter, opponent)
+    if isinstance(fighter, Zoner):
+        return fighter.fire_projectile(opponent)
+    if isinstance(fighter, Grappler):
+        return fighter.execute_grab(opponent)
+    if isinstance(fighter, AgileHero):
+        return fighter.start_dash(direction)
+    if isinstance(fighter, AerialFighter) and not fighter.grounded:
+        return fighter.start_air_dash(direction)
+    return False
+
+
+def _update_character_systems(fighter, opponent):
+    """Advance mechanics that are independent from the base attack state."""
+    if isinstance(fighter, Zoner):
+        fighter.update_projectiles(opponent)
+
+
+def _update_enemy_ai():
+    """Simple CPU that approaches, blocks close attacks, and cycles normals."""
+    global enemy_ai_timer, enemy_ai_attack_index, enemy_ai_block_timer
+
+    if enemy.state in ("HITSTUN", "KO", "ATTACK"):
+        return
+
+    distance = abs(player.x - enemy.x)
+    direction = _facing_direction(enemy, player)
+    enemy_ai_timer = max(0.0, enemy_ai_timer - time.dt)
+    enemy_ai_block_timer = max(0.0, enemy_ai_block_timer - time.dt)
+
+    # A block is a short, occasional reaction rather than an instantaneous
+    # answer to every player attack. This leaves ordinary hits meaningful.
+    if enemy.state == "BLOCK" and enemy_ai_block_timer > 0:
+        return
+    if enemy.state == "BLOCK":
+        enemy.set_state("IDLE")
+
+    if player.state == "ATTACK" and distance <= 2.8 and enemy.grounded and enemy_ai_timer <= 0:
+        enemy.set_state("BLOCK")
+        enemy_ai_block_timer = 0.10
+        enemy_ai_timer = 0.65
+        return
+
+    if distance > 1.8:
+        enemy.move_horizontal(direction)
+        return
+
+    enemy.stop_movement()
+    if enemy_ai_timer <= 0:
+        attacks = ("LIGHT", "MEDIUM", "HEAVY")
+        enemy.start_attack(attacks[enemy_ai_attack_index % len(attacks)])
+        enemy_ai_attack_index += 1
+        enemy_ai_timer = 0.45
 
 
 # ============================================================
@@ -210,15 +282,19 @@ def update():
     
     global paused
 
+    # Feedback uses unscaled time so hitstop never makes shaking or the
+    # freeze-frame timer feel delayed after a successful hit.
+    frame_dt = max(time.dt_unscaled, 0.0)
+
     # Update camera shake (should run even during hitstop)
     try:
-        update_shake(time.dt)
+        update_shake(frame_dt)
     except Exception:
         pass
 
     # Update hitstop first so frames can be frozen; if frozen, return early
     try:
-        if juice.update_hitstop(time.dt):
+        if juice.update_hitstop(frame_dt):
             return
     except Exception:
         pass
@@ -240,8 +316,12 @@ def update():
     # Read controller state
     read_controller()
     
-    # Get movement input (smoothed)
+    # Get movement input. Keyboard is held-key based so it is frame-rate
+    # independent and behaves like the controller rather than moving in taps.
     horizontal = get_horizontal()
+    keyboard_horizontal = int(bool(held_keys['d'])) - int(bool(held_keys['a']))
+    if keyboard_horizontal:
+        horizontal = keyboard_horizontal
     
     # Detect jump input
     jump_input = jump_just_pressed()
@@ -256,6 +336,10 @@ def update():
     # --------------------------------------------------------
     # PLAYER STATE MACHINE
     # --------------------------------------------------------
+
+    player_blocking = block_pressed() or bool(held_keys['f'])
+    if player.state == "BLOCK" and not player_blocking:
+        player.set_state("IDLE" if player.grounded else "JUMP")
 
     if player.state == "ATTACK":
         
@@ -283,13 +367,18 @@ def update():
         # IDLE, WALK, JUMP states
         
         # Check for block
-        if block_pressed() and player.grounded:
-            player.state = "BLOCK"
+        if player_blocking and player.grounded:
+            player.set_state("BLOCK")
 
         else:
-            
+            if dash_pressed():
+                _use_character_special(player, enemy, horizontal)
+
+            elif special_pressed():
+                _use_character_special(player, enemy, horizontal)
+
             # Check attack inputs (priority order)
-            if light_pressed():
+            elif light_pressed():
                 player.start_attack("LIGHT")
 
             elif medium_pressed():
@@ -319,9 +408,13 @@ def update():
     # Update combo timer
     player.update_combo_timer()
 
+    _update_character_systems(player, enemy)
+
     # --------------------------------------------------------
-    # ENEMY PROCESSING (AI would go here)
+    # ENEMY PROCESSING
     # --------------------------------------------------------
+
+    _update_enemy_ai()
 
     if enemy.state == "HITSTUN":
         enemy.update_hitstun()
@@ -334,6 +427,8 @@ def update():
 
     # Enemy gravity
     enemy.update_gravity()
+    enemy.update_combo_timer()
+    _update_character_systems(enemy, player)
 
     # --------------------------------------------------------
     # FACING DIRECTION
@@ -397,20 +492,6 @@ def input(key):
     if paused:
         return
     
-    # Movement
-    if key == 'a':
-        # allow movement unless crouching
-        if player.state != 'CROUCH':
-            player.x -= 0.5
-            if player.grounded and player.state not in ("ATTACK", "BLOCK"):
-                player.state = "WALK"
-    
-    if key == 'd':
-        if player.state != 'CROUCH':
-            player.x += 0.5
-            if player.grounded and player.state not in ("ATTACK", "BLOCK"):
-                player.state = "WALK"
-    
     # Jump
     if key == 'space':
         player.try_jump()
@@ -434,6 +515,16 @@ def input(key):
     if key == 'e':
         if player.state != 'CROUCH':
             player.start_attack("HEAVY")
+
+    if key == 'r':
+        if player.state != 'CROUCH':
+            player.start_attack("LAUNCHER")
+
+    if key == 'shift':
+        _use_character_special(player, enemy)
+
+    if key == 'x':
+        _use_character_special(player, enemy)
 
 
 # ============================================================
