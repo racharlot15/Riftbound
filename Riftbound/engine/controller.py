@@ -1,336 +1,220 @@
 """
-Riftbound Controller Module
-Handles HID input from custom controller with D-PAD smoothing
+Riftbound Controller Input Module
+Handles custom HID controller inputs (gamepads) with D-PAD smoothing,
+deadzones, and keyboard fallbacks.
 """
 
-import hid
+# Safe HID import fallback
+try:
+    import hid
+    HAS_HID = True
+except ImportError:
+    hid = None
+    HAS_HID = False
+    print("[controller] Warning: 'hidapi' module not found. Controller support disabled, falling back to keyboard controls.")
 
+from ursina import held_keys
 
 # ============================================================
 # CONTROLLER CONFIGURATION
 # ============================================================
 
-VID = 0x146B
-PID = 0x0603
+# Target device identifiers (update if using specific hardware)
+VENDOR_ID = 0x0000
+PRODUCT_ID = 0x0000
 
-# D-PAD SMOOTHING - makes dpad movement as fluid as analog stick
-DPAD_SMOOTH_SPEED = 15  # Higher = faster response (snappier), lower = more fluid/gradual
+# D-PAD & Analog Deadzones
+DEADZONE = 0.15
+SMOOTHING_FACTOR = 0.8  # D-PAD input smoothing (0.0 = instant, 1.0 = heavy smooth)
 
-# D-pad raw value for "down". Based on the observed pattern (up=4, right=12,
-# left=28), down is most likely 20. If crouch doesn't trigger on your D-pad,
-# print(dpad) during read_controller() while holding down to find the real value.
-DPAD_DOWN_VALUE = 20
+# Controller state tracking
+game_controller = None
+raw_horizontal = 0.0
+smoothed_horizontal = 0.0
 
-# NOTE: On this controller, byte indices 1 and 2 (originally mapped to
-# left_x/left_y) do NOT carry real analog stick data — they were observed
-# to be pinned at constant values (128 and 255) regardless of stick input,
-# which caused jump to falsely trigger "up" 100% of the time. Analog
-# vertical input (jump/crouch via stick) is disabled below until the real
-# axis byte offset is identified. D-pad and keyboard input are unaffected
-# and remain the primary controls.
-ANALOG_VERTICAL_ENABLED = False
+# Button states
+button_states = {
+    'jump': False,
+    'light': False,
+    'medium': False,
+    'heavy': False,
+    'launcher': False,
+    'block': False,
+    'crouch': False,
+    'dash': False,
+    'special': False
+}
 
-
-# ============================================================
-# CONTROLLER STATE
-# ============================================================
-
-controller = None
-initialized = False
-
-left_x = 128
-left_y = 255
-dpad = 0
-buttons = 0
-l2 = 0
-r2 = 128
-
-previous_buttons = 0
-previous_dpad = 0
-previous_analog_up = False
-
-dpad_horizontal_smoothed = 0.0
-dpad_vertical_smoothed = 0.0
+prev_button_states = button_states.copy()
 
 
 # ============================================================
-# CONTROLLER INITIALIZATION
+# INITIALIZATION & CLEANUP
 # ============================================================
 
 def init_controller():
-    """Initialize HID controller connection"""
-    global controller, initialized
+    """
+    Initialize connection to the HID controller device.
+    Returns True if successful, False if no controller found or module missing.
+    """
+    global game_controller
+
+    if not HAS_HID or hid is None:
+        print("ℹ No HID library loaded. Using keyboard fallback.")
+        return False
 
     try:
-        controller = hid.device()
-        controller.open(VID, PID)
-        controller.set_nonblocking(True)
-        initialized = True
-        print("✓ Controller connected")
+        # Attempt to open controller device
+        game_controller = hid.device()
+        
+        # If specific Vendor/Product ID set, try opening by ID
+        if VENDOR_ID != 0x0000 and PRODUCT_ID != 0x0000:
+            game_controller.open(VENDOR_ID, PRODUCT_ID)
+        else:
+            # Look for any available HID device
+            devices = hid.enumerate()
+            if devices:
+                game_controller.open_path(devices[0]['path'])
+            else:
+                print("ℹ No HID controllers found. Using keyboard fallback.")
+                return False
+
+        game_controller.set_nonblocking(True)
+        print("✓ Controller connected successfully")
         return True
+
     except Exception as e:
-        print(f"✗ Controller connection failed: {e}")
-        initialized = False
+        print(f"⚠ Controller initialization failed: {e}")
+        print("  Using keyboard fallback controls.")
+        game_controller = None
         return False
 
 
 def close_controller():
-    """Close HID controller connection"""
-    global initialized
-
-    if controller and initialized:
+    """Safely close controller connection"""
+    global game_controller
+    if HAS_HID and game_controller:
         try:
-            controller.close()
+            game_controller.close()
             print("✓ Controller disconnected")
-        except:
+        except Exception:
             pass
-        initialized = False
+        game_controller = None
 
 
 # ============================================================
-# INPUT READING
+# INPUT READING & SMOOTHING
 # ============================================================
 
 def read_controller():
-    """Read latest input data from controller"""
-
-    global left_x, left_y, dpad, buttons, l2, r2
-
-    if not initialized or not controller:
-        return
-
-    latest = None
-
-    # Read multiple times to get latest state
-    for _ in range(10):
-        data = controller.read(64)
-        if data:
-            latest = data
-
-    if latest is None:
-        return
-
-    # Parse input data
-    if len(latest) > 2:
-        left_x = latest[1]
-        left_y = latest[2]
-
-    if len(latest) > 11:
-        dpad = latest[11]
-
-    if len(latest) > 10:
-        buttons = latest[10]
-
-    if len(latest) > 9:
-        l2 = latest[8]
-        r2 = latest[9]
-
-
-# ============================================================
-# BUTTON DETECTION FUNCTIONS
-# ============================================================
-
-def held(mask):
-    """Check if button is currently held down"""
-    return (buttons & mask) != 0
-
-
-def just_pressed(mask):
-    """Check if button was just pressed this frame"""
-    return (
-        (buttons & mask) != 0
-        and
-        (previous_buttons & mask) == 0
-    )
-
-
-# Attack button detection
-def light_pressed():
-    return just_pressed(4)
-
-
-def medium_pressed():
-    return just_pressed(8)
-
-
-def heavy_pressed():
-    return just_pressed(2)
-
-
-def launcher_pressed():
-    return just_pressed(1)
-
-
-def dash_pressed():
-    return just_pressed(16)
-
-
-def special_pressed():
-    return just_pressed(32)
-
-
-# Trigger/shoulder button detection
-def block_pressed():
-    return l2 > 200
-
-
-def super_pressed():
-    return r2 < 50
-
-
-# ============================================================
-# ANALOG STICK VERTICAL HELPER
-# ============================================================
-
-DEADZONE = 0.12
-ANALOG_JUMP_THRESHOLD = 0.5    # how far up the stick must be pushed to count as "jump"
-ANALOG_CROUCH_THRESHOLD = 0.5  # how far down the stick must be pushed to count as "crouch"
-
-ANALOG_Y_UP_IS_LOW = False
-
-
-def get_analog_vertical():
     """
-    Get vertical stick input, normalized like get_horizontal().
-    Returns -1.0 (down) to 1.0 (up).
-
-    Currently disabled (see ANALOG_VERTICAL_ENABLED) because left_y was
-    found to be pinned at a constant value on this controller, which made
-    jump falsely trigger regardless of actual stick position.
+    Read latest input report from controller and update button/axis states.
+    Falls back gracefully to keyboard inputs if no controller is present.
     """
-    if not ANALOG_VERTICAL_ENABLED:
-        return 0.0
+    global raw_horizontal, smoothed_horizontal, button_states, prev_button_states
 
-    if ANALOG_Y_UP_IS_LOW:
-        raw = (128 - left_y) / 127
-    else:
-        raw = (left_y - 128) / 127
+    # Save previous state for 'just pressed' checks
+    prev_button_states = button_states.copy()
 
-    if abs(raw) < DEADZONE:
-        raw = 0
+    # If controller is active and module exists, try reading HID data
+    if HAS_HID and game_controller:
+        try:
+            data = game_controller.read(64)
+            if data:
+                # Example HID parsing logic (adjust offsets if using specific hardware)
+                # Parse horizontal axis / D-Pad from byte array
+                raw_x = data[0] - 128 if len(data) > 0 else 0
+                norm_x = raw_x / 128.0
+                
+                # Apply deadzone
+                if abs(norm_x) < DEADZONE:
+                    raw_horizontal = 0.0
+                else:
+                    raw_horizontal = norm_x
 
-    return max(-1.0, min(1.0, raw))
+                # Parse buttons from data bytes
+                if len(data) > 1:
+                    btn_byte = data[1]
+                    button_states['light'] = bool(btn_byte & 0x01)
+                    button_states['medium'] = bool(btn_byte & 0x02)
+                    button_states['heavy'] = bool(btn_byte & 0x04)
+                    button_states['launcher'] = bool(btn_byte & 0x08)
+                    button_states['jump'] = bool(btn_byte & 0x10)
+                    button_states['block'] = bool(btn_byte & 0x20)
+                    button_states['crouch'] = bool(btn_byte & 0x40)
+                    button_states['dash'] = bool(btn_byte & 0x80)
+
+        except Exception:
+            # If reading fails, clear controller handle and switch to keyboard
+            close_controller()
+
+    # Keyboard fallback logic if no HID controller input received
+    kb_horizontal = 0.0
+    if held_keys['d'] or held_keys['right arrow']:
+        kb_horizontal += 1.0
+    if held_keys['a'] or held_keys['left arrow']:
+        kb_horizontal -= 1.0
+
+    # Combine or override with keyboard inputs
+    if not game_controller:
+        raw_horizontal = kb_horizontal
+        button_states['jump'] = bool(held_keys['space'] or held_keys['w'] or held_keys['up arrow'])
+        button_states['light'] = bool(held_keys['q'] or held_keys['j'])
+        button_states['medium'] = bool(held_keys['w'] or held_keys['k'])
+        button_states['heavy'] = bool(held_keys['e'] or held_keys['l'])
+        button_states['launcher'] = bool(held_keys['r'] or held_keys['i'])
+        button_states['block'] = bool(held_keys['f'] or held_keys['u'])
+        button_states['crouch'] = bool(held_keys['s'] or held_keys['down arrow'])
+        button_states['dash'] = bool(held_keys['left shift'] or held_keys['right shift'])
+        button_states['special'] = bool(held_keys['x'] or held_keys['o'])
+
+    # Apply exponential smoothing to horizontal axis for fluid movement
+    smoothed_horizontal = (smoothed_horizontal * SMOOTHING_FACTOR) + (raw_horizontal * (1.0 - SMOOTHING_FACTOR))
 
 
 # ============================================================
-# JUMP INPUT DETECTION (D-PAD + ANALOG STICK)
-# ============================================================
-
-def analog_jump_pressed():
-    """Edge-detect the analog stick crossing into 'up' this frame."""
-    global previous_analog_up
-
-    is_up = get_analog_vertical() > ANALOG_JUMP_THRESHOLD
-    just_pressed_now = is_up and not previous_analog_up
-    previous_analog_up = is_up
-    return just_pressed_now
-
-
-def jump_just_pressed():
-    """Detect if jump was just pressed this frame (D-pad up, or analog
-    stick up if enabled)"""
-    analog_just = analog_jump_pressed()
-    dpad_just = dpad == 4 and previous_dpad != 4
-    return dpad_just or analog_just
-
-
-def jump_held():
-    """Detect if jump button is currently held down (D-pad, or analog
-    stick if enabled)"""
-    return dpad == 4 or get_analog_vertical() > ANALOG_JUMP_THRESHOLD
-
-
-# ============================================================
-# CROUCH INPUT DETECTION (D-PAD DOWN + ANALOG STICK DOWN)
-# ============================================================
-
-def crouch_held():
-    """Detect if crouch input (down) is currently held"""
-    return dpad == DPAD_DOWN_VALUE or get_analog_vertical() < -ANALOG_CROUCH_THRESHOLD
-
-
-# ============================================================
-# MOVEMENT INPUT WITH SMOOTHING
+# GETTER HELPER FUNCTIONS
 # ============================================================
 
 def get_horizontal():
-    """
-    Get horizontal movement input with smooth D-PAD interpolation.
-    Returns value between -1.0 and 1.0 like an analog stick.
-    """
-
-    global dpad_horizontal_smoothed
-
-    # Get analog stick input
-    analog = (left_x - 128) / 127
-
-    if abs(analog) < DEADZONE:
-        analog = 0
-
-    # Get raw dpad input target
-    dpad_target = 0.0
-
-    if dpad == 28:      # Left
-        dpad_target = -1.0
-    elif dpad == 12:    # Right
-        dpad_target = 1.0
-
-    # Smoothly interpolate dpad value towards target (like analog stick)
-    import time as ursina_time
-
-    if dpad_target != 0:
-        # D-pad is pressed - smoothly ramp up to full value
-        diff = dpad_target - dpad_horizontal_smoothed
-        smoothing_factor = min(1.0, DPAD_SMOOTH_SPEED * ursina_time.dt)
-        dpad_horizontal_smoothed += diff * smoothing_factor
-
-        # Clamp to prevent overshoot
-        dpad_horizontal_smoothed = max(-1.0, min(1.0, dpad_horizontal_smoothed))
-
-        return dpad_horizontal_smoothed
-    else:
-        # No dpad input - smoothly decay to zero (natural stop feel)
-        if abs(dpad_horizontal_smoothed) > 0.01:
-            decay_factor = 1.0 - min(1.0, DPAD_SMOOTH_SPEED * ursina_time.dt)
-            dpad_horizontal_smoothed *= decay_factor
-
-            # Snap to zero once very small to avoid drift
-            if abs(dpad_horizontal_smoothed) < 0.01:
-                dpad_horizontal_smoothed = 0.0
-
-            return dpad_horizontal_smoothed
-        else:
-            dpad_horizontal_smoothed = 0.0
-
-    return max(-1, min(1, analog))
+    """Get smoothed horizontal axis (-1.0 to 1.0)"""
+    return smoothed_horizontal
 
 
-# ============================================================
-# STATE MANAGEMENT
-# ============================================================
-
-def store_input_state():
-    """Store current input state for next-frame comparison"""
-    global previous_buttons, previous_dpad
-    previous_buttons = buttons
-    previous_dpad = dpad
+def is_pressed(action):
+    """Check if action button is currently held down"""
+    return button_states.get(action, False)
 
 
-def reset_inputs():
-    """Reset all input states"""
-    global left_x, left_y, dpad, buttons, l2, r2
-    global previous_buttons, previous_dpad
-    global dpad_horizontal_smoothed, dpad_vertical_smoothed
-    global previous_analog_up
+def just_pressed(action):
+    """Check if action button was pressed this frame"""
+    return button_states.get(action, False) and not prev_button_states.get(action, False)
 
-    left_x = 128
-    left_y = 255
-    dpad = 0
-    buttons = 0
-    l2 = 0
-    r2 = 128
-    previous_buttons = 0
-    previous_dpad = 0
-    dpad_horizontal_smoothed = 0.0
-    dpad_vertical_smoothed = 0.0
-    previous_analog_up = False
+
+# Convenient alias getters
+def jump_just_pressed():
+    return just_pressed('jump')
+
+def light_pressed():
+    return just_pressed('light')
+
+def medium_pressed():
+    return just_pressed('medium')
+
+def heavy_pressed():
+    return just_pressed('heavy')
+
+def launcher_pressed():
+    return just_pressed('launcher')
+
+def block_held():
+    return is_pressed('block')
+
+def crouch_held():
+    return is_pressed('crouch')
+
+def dash_just_pressed():
+    return just_pressed('dash')
+
+def special_just_pressed():
+    return just_pressed('special')
