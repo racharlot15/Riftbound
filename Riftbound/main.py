@@ -12,7 +12,8 @@ Controls:
 - ○: Heavy Attack
 - ✕: Launcher
 - L2: Block
-- Keyboard fallback: A/D=Move, Space=Jump, Q/W/E=Attacks
+- Keyboard fallback: A/D=Move, Space=Jump, Q/W/E=Attacks, R=Launcher,
+  F=Block, Shift=Dash, X=Character Special
 
 Author: Riftbound Dev Team
 Version: 0.1.0 (Modular Architecture)
@@ -21,15 +22,25 @@ Version: 0.1.0 (Modular Architecture)
 import sys
 import os
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path for imports and set cwd to package folder so double-click runs resolve assets
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)
+try:
+    os.chdir(script_dir)
+except Exception:
+    pass
 # Ensure console supports UTF-8 so unicode symbols print correctly on Windows
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
     pass
+# Helpful debug output for startup issues
+try:
+    print(f"Working directory: {os.getcwd()}")
+except Exception:
+    pass
 
-from ursina import Ursina, window, camera, time, Entity, Text, AmbientLight, DirectionalLight, color
+from ursina import Ursina, window, camera, time, Entity, Text, AmbientLight, DirectionalLight, color, held_keys
 
 # Import engine modules
 from engine.controller import (
@@ -43,6 +54,8 @@ from engine.controller import (
     heavy_pressed,
     launcher_pressed,
     block_pressed,
+    dash_pressed,
+    special_pressed,
     store_input_state
 )
 
@@ -90,6 +103,18 @@ debug_hud = None
 # Game state flags
 game_running = True
 paused = False
+
+# Match state
+match_active = True
+result_text = None
+initial_player_pos = None
+initial_enemy_pos = None
+
+# Lightweight deterministic CPU state. This keeps the prototype playable
+# while a full behavior-tree AI remains out of scope.
+enemy_ai_timer = 0.0
+enemy_ai_attack_index = 0
+enemy_ai_block_timer = 0.0
 
 
 # ============================================================
@@ -139,6 +164,18 @@ def initialize_game():
     player.health_bar = HealthBar((-0.55, 0.42))
     enemy.health_bar = HealthBar((0.55, 0.42))
     
+    # Remember initial positions for rematch resets
+    global initial_player_pos, initial_enemy_pos, match_active
+    try:
+        initial_player_pos = (player.x, player.y, getattr(player, 'z', 0))
+    except Exception:
+        initial_player_pos = (-5, 1, 0)
+    try:
+        initial_enemy_pos = (enemy.x, enemy.y, getattr(enemy, 'z', 0))
+    except Exception:
+        initial_enemy_pos = (5, 1, 0)
+    match_active = True
+
     # Create debug HUD
     debug_hud = DebugHUD()
     
@@ -193,9 +230,72 @@ def _print_controls():
     print("  L2: Block")
     print()
     print("KEYBOARD FALLBACK:")
-    print("  A/D: Move | Space: Jump")
-    print("  Q: Light | W: Medium | E: Heavy")
+    print("  A/D: Move | Space: Jump | F: Block")
+    print("  Q: Light | W: Medium | E: Heavy | R: Launcher")
+    print("  Shift: Dash | X: Character Special")
     print("-" * 40)
+
+
+def _facing_direction(fighter, opponent):
+    """Return the horizontal direction from fighter toward opponent."""
+    return 1 if opponent.x >= fighter.x else -1
+
+
+def _use_character_special(fighter, opponent, direction=0):
+    """Run the archetype-specific move bound to the special input."""
+    direction = direction or _facing_direction(fighter, opponent)
+    if isinstance(fighter, Zoner):
+        return fighter.fire_projectile(opponent)
+    if isinstance(fighter, Grappler):
+        return fighter.execute_grab(opponent)
+    if isinstance(fighter, AgileHero):
+        return fighter.start_dash(direction)
+    if isinstance(fighter, AerialFighter) and not fighter.grounded:
+        return fighter.start_air_dash(direction)
+    return False
+
+
+def _update_character_systems(fighter, opponent):
+    """Advance mechanics that are independent from the base attack state."""
+    if isinstance(fighter, Zoner):
+        fighter.update_projectiles(opponent)
+
+
+def _update_enemy_ai():
+    """Simple CPU that approaches, blocks close attacks, and cycles normals."""
+    global enemy_ai_timer, enemy_ai_attack_index, enemy_ai_block_timer
+
+    if enemy.state in ("HITSTUN", "KO", "ATTACK"):
+        return
+
+    distance = abs(player.x - enemy.x)
+    direction = _facing_direction(enemy, player)
+    enemy_ai_timer = max(0.0, enemy_ai_timer - time.dt)
+    enemy_ai_block_timer = max(0.0, enemy_ai_block_timer - time.dt)
+
+    # A block is a short, occasional reaction rather than an instantaneous
+    # answer to every player attack. This leaves ordinary hits meaningful.
+    if enemy.state == "BLOCK" and enemy_ai_block_timer > 0:
+        return
+    if enemy.state == "BLOCK":
+        enemy.set_state("IDLE")
+
+    if player.state == "ATTACK" and distance <= 2.8 and enemy.grounded and enemy_ai_timer <= 0:
+        enemy.set_state("BLOCK")
+        enemy_ai_block_timer = 0.10
+        enemy_ai_timer = 0.65
+        return
+
+    if distance > 1.8:
+        enemy.move_horizontal(direction)
+        return
+
+    enemy.stop_movement()
+    if enemy_ai_timer <= 0:
+        attacks = ("LIGHT", "MEDIUM", "HEAVY")
+        enemy.start_attack(attacks[enemy_ai_attack_index % len(attacks)])
+        enemy_ai_attack_index += 1
+        enemy_ai_timer = 0.45
 
 
 # ============================================================
@@ -208,23 +308,32 @@ def update():
     Handles input processing, game logic, and state updates.
     """
     
-    global paused
+    global paused, match_active, result_text
+
+    # Feedback uses unscaled time so hitstop never makes shaking or the
+    # freeze-frame timer feel delayed after a successful hit.
+    frame_dt = max(time.dt_unscaled, 0.0)
 
     # Update camera shake (should run even during hitstop)
     try:
-        update_shake(time.dt)
+        update_shake(frame_dt)
     except Exception:
         pass
 
     # Update hitstop first so frames can be frozen; if frozen, return early
     try:
-        if juice.update_hitstop(time.dt):
+        if juice.update_hitstop(frame_dt):
             return
     except Exception:
         pass
 
     # Don't process game logic when paused
     if paused:
+        return
+
+    # If the match is over, skip game logic (input handler still receives keys for rematch)
+    global match_active
+    if not match_active:
         return
 
     # Record previous horizontal positions for collision/bounce calculation
@@ -240,8 +349,12 @@ def update():
     # Read controller state
     read_controller()
     
-    # Get movement input (smoothed)
+    # Get movement input. Keyboard is held-key based so it is frame-rate
+    # independent and behaves like the controller rather than moving in taps.
     horizontal = get_horizontal()
+    keyboard_horizontal = int(bool(held_keys['d'])) - int(bool(held_keys['a']))
+    if keyboard_horizontal:
+        horizontal = keyboard_horizontal
     
     # Detect jump input
     jump_input = jump_just_pressed()
@@ -256,6 +369,10 @@ def update():
     # --------------------------------------------------------
     # PLAYER STATE MACHINE
     # --------------------------------------------------------
+
+    player_blocking = block_pressed() or bool(held_keys['f'])
+    if player.state == "BLOCK" and not player_blocking:
+        player.set_state("IDLE" if player.grounded else "JUMP")
 
     if player.state == "ATTACK":
         
@@ -283,13 +400,18 @@ def update():
         # IDLE, WALK, JUMP states
         
         # Check for block
-        if block_pressed() and player.grounded:
-            player.state = "BLOCK"
+        if player_blocking and player.grounded:
+            player.set_state("BLOCK")
 
         else:
-            
+            if dash_pressed():
+                _use_character_special(player, enemy, horizontal)
+
+            elif special_pressed():
+                _use_character_special(player, enemy, horizontal)
+
             # Check attack inputs (priority order)
-            if light_pressed():
+            elif light_pressed():
                 player.start_attack("LIGHT")
 
             elif medium_pressed():
@@ -319,9 +441,13 @@ def update():
     # Update combo timer
     player.update_combo_timer()
 
+    _update_character_systems(player, enemy)
+
     # --------------------------------------------------------
-    # ENEMY PROCESSING (AI would go here)
+    # ENEMY PROCESSING
     # --------------------------------------------------------
+
+    _update_enemy_ai()
 
     if enemy.state == "HITSTUN":
         enemy.update_hitstun()
@@ -334,6 +460,8 @@ def update():
 
     # Enemy gravity
     enemy.update_gravity()
+    enemy.update_combo_timer()
+    _update_character_systems(enemy, player)
 
     # --------------------------------------------------------
     # FACING DIRECTION
@@ -362,6 +490,29 @@ def update():
         debug_hud.update_fps(1.0 / max(time.dt_unscaled, 1e-6))
 
     # --------------------------------------------------------
+    # MATCH END CHECK
+    # --------------------------------------------------------
+
+    try:
+        if match_active:
+            if player is not None and player.state == 'KO':
+                match_active = False
+                winner = getattr(enemy, 'fighter_name', 'Enemy')
+                try:
+                    result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
+                except Exception:
+                    result_text = None
+            elif enemy is not None and enemy.state == 'KO':
+                match_active = False
+                winner = getattr(player, 'fighter_name', 'Player')
+                try:
+                    result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
+                except Exception:
+                    result_text = None
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
     # STORE INPUT STATE FOR NEXT FRAME
     # --------------------------------------------------------
 
@@ -378,7 +529,7 @@ def input(key):
     Called automatically by Ursina when keys are pressed.
     """
     
-    global paused
+    global paused, match_active, result_text
     
     # Handle key releases (Ursina sends 'key up')
     if isinstance(key, str) and key.endswith(' up'):
@@ -389,6 +540,22 @@ def input(key):
     
     # Pause toggle
     if key == 'escape':
+        # If match ended, treat ESC as return-to-menu (simple behavior: restart match and pause as menu)
+        if not match_active:
+            # destroy result text and return to menu state (for now, just rematch reset and pause)
+            try:
+                if result_text is not None:
+                    result_text.enabled = False
+            except Exception:
+                pass
+            # keep paused state but reset match_active so user can choose
+            match_active = True
+            # call reset to ensure UI consistent
+            try:
+                reset_match()
+            except Exception:
+                pass
+            return
         paused = not paused
         print(f"Game {'PAUSED' if paused else 'RESUMED'}")
         return
@@ -397,24 +564,18 @@ def input(key):
     if paused:
         return
     
-    # Movement
-    if key == 'a':
-        # allow movement unless crouching
-        if player.state != 'CROUCH':
-            player.x -= 0.5
-            if player.grounded and player.state not in ("ATTACK", "BLOCK"):
-                player.state = "WALK"
-    
-    if key == 'd':
-        if player.state != 'CROUCH':
-            player.x += 0.5
-            if player.grounded and player.state not in ("ATTACK", "BLOCK"):
-                player.state = "WALK"
-    
     # Jump
     if key == 'space':
         player.try_jump()
     
+    # Rematch on Enter when match is over
+    if key == 'enter' and not match_active:
+        try:
+            reset_match()
+        except Exception:
+            pass
+        return
+
     # Crouch (press and hold 's')
     if key == 's':
         if hasattr(player, 'start_crouch'):
@@ -434,6 +595,66 @@ def input(key):
     if key == 'e':
         if player.state != 'CROUCH':
             player.start_attack("HEAVY")
+
+    if key == 'r':
+        if player.state != 'CROUCH':
+            player.start_attack("LAUNCHER")
+
+    if key == 'shift':
+        _use_character_special(player, enemy)
+
+    if key == 'x':
+        _use_character_special(player, enemy)
+
+
+# ============================================================
+# MATCH / REMATCH HELPERS
+# ============================================================
+
+def reset_match():
+    """Reset both fighters and UI for a new round/match."""
+    global player, enemy, initial_player_pos, initial_enemy_pos, match_active, result_text
+    try:
+        # Reposition fighters to their initial spots
+        if player is not None and initial_player_pos is not None:
+            try:
+                player.x, player.y, player.z = initial_player_pos
+            except Exception:
+                try:
+                    player.position = initial_player_pos
+                except Exception:
+                    pass
+        if enemy is not None and initial_enemy_pos is not None:
+            try:
+                enemy.x, enemy.y, enemy.z = initial_enemy_pos
+            except Exception:
+                try:
+                    enemy.position = initial_enemy_pos
+                except Exception:
+                    pass
+        # Reset fighter internal state
+        try:
+            if player is not None:
+                player.reset_for_match()
+        except Exception:
+            pass
+        try:
+            if enemy is not None:
+                enemy.reset_for_match()
+        except Exception:
+            pass
+        # Clear result UI
+        try:
+            if result_text is not None:
+                result_text.enabled = False
+                result_text = None
+        except Exception:
+            pass
+        # Reactivate match
+        match_active = True
+        print("↺ Match reset — ready to rematch")
+    except Exception:
+        pass
 
 
 # ============================================================

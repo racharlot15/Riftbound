@@ -114,7 +114,7 @@ class Grappler(Fighter):
                 print(f"  💔 {self.fighter_name} armor broken!")
             
             if self.health_bar:
-                self.health_bar.update_health(self.health)
+                self.health_bar.update_health(self.health, self.max_health)
             
             if self.health <= 0:
                 self.set_state("KO")
@@ -157,7 +157,7 @@ class Grappler(Fighter):
                 target.knockback_velocity = 2
             
             if target.health_bar:
-                target.health_bar.update_health(target.health)
+                target.health_bar.update_health(target.health, target.max_health)
             
             print(f"  🤏 {self.fighter_name} GRABS {target.fighter_name}! (-{actual_damage} HP)")
             

@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Ursina asset folders (keep in repo but ignore local temp files)
+assets/*.pyc
+
+# Other OS files
+Thumbs.db
+.DS_Store

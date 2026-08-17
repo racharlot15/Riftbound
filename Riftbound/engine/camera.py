@@ -16,23 +16,28 @@ def trigger_shake(strength=0.15, duration=0.15):
     global _shake_timer, _shake_strength, _shake_base_position
     _shake_timer = max(_shake_timer, duration)
     _shake_strength = max(_shake_strength, strength)
-    if _shake_base_position is None:
-        _shake_base_position = None
+    # The base position is captured on the next frame. Keeping it as plain
+    # numbers avoids Vec3/tuple addition failures that previously silenced
+    # the shake through the broad exception handler.
 
 
 def update_shake(dt):
     global _shake_timer, _shake_strength, _shake_base_position
     if _shake_timer > 0:
         if _shake_base_position is None:
-            _shake_base_position = camera.position
-        _shake_timer -= dt
+            _shake_base_position = (float(camera.x), float(camera.y), float(camera.z))
+        _shake_timer = max(0.0, _shake_timer - max(0.0, dt))
         offset = (
             random.uniform(-_shake_strength, _shake_strength),
             random.uniform(-_shake_strength, _shake_strength),
             0
         )
         try:
-            camera.position = _shake_base_position + offset
+            camera.position = (
+                _shake_base_position[0] + offset[0],
+                _shake_base_position[1] + offset[1],
+                _shake_base_position[2],
+            )
         except Exception:
             pass
     else:

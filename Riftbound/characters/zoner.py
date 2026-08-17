@@ -83,9 +83,12 @@ class Projectile(Entity):
 
     def destroy(self):
         """Remove projectile from scene"""
-        import ursina
-        if self in ursina.scene.entities:
+        try:
+            import ursina
+            # Call ursina.destroy() safely; it will handle removal if present.
             ursina.destroy(self)
+        except Exception:
+            pass
 
 
 class Zoner(Fighter):

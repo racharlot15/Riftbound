@@ -9,7 +9,7 @@ Stats:
 - Special: Multi-jump, Air combos, Fast fall
 """
 
-from engine.fighter import Fighter, MOVE_SPEED, AIR_MOVE_SPEED, GRAVITY, MAX_FALL_SPEED
+from engine.fighter import Fighter, MOVE_SPEED, AIR_MOVE_SPEED, GRAVITY, MAX_FALL_SPEED, JUMP_BUFFER_TIME
 
 
 class AerialFighter(Fighter):
@@ -30,6 +30,7 @@ class AerialFighter(Fighter):
     FAST_FALL_MULTIPLIER = 1.8     # Gravity increase when fast falling
     AIR_DASH_DISTANCE = 4
     AIR_DASH_COOLDOWN = 0.7
+    AIR_DASH_DURATION = 0.15
     
     # Juggle system
     JUGGLE_GRAVITY_REDUCTION = 0.6  # Reduced gravity when being juggled
@@ -114,7 +115,7 @@ class AerialFighter(Fighter):
         
         # Buffer if nothing else works
         if self.state != "KO":
-            self.jump_buffer_timer = self.JUMP_BUFFER_TIME
+            self.jump_buffer_timer = JUMP_BUFFER_TIME
         return False
 
     def _execute_air_jump(self):
@@ -136,10 +137,14 @@ class AerialFighter(Fighter):
 
     def start_air_dash(self, direction):
         """Begin an air dash (can only be used airborne)"""
-        if not self.grounded and self.air_dash_timer <= 0 and direction != 0:
+        if not self.grounded and getattr(self, 'air_dash_timer', 0) <= 0 and direction != 0:
             self.is_air_dashing = True
             self.air_dash_direction = direction
-            self.air_dash_timer = self.AIR_DASH_DURATION if hasattr(self, 'AIR_DASH_DURATION') else 0.15
+            # Use the class constant for duration
+            try:
+                self.air_dash_timer = float(self.AIR_DASH_DURATION)
+            except Exception:
+                self.air_dash_timer = 0.15
             print(f"  🌪️ {self.fighter_name} air dashes!")
             return True
         return False
@@ -213,14 +218,28 @@ class AerialFighter(Fighter):
 
     def _process_air_dash(self, time_module):
         """Process air dash movement"""
-        dash_duration = 0.15  # Default
-        dash_speed = self.AIR_DASH_DISTANCE / dash_duration
+        # Use the configured duration and decrement the air_dash_timer
+        try:
+            dash_duration = float(self.AIR_DASH_DURATION)
+        except Exception:
+            dash_duration = 0.15
+        dash_speed = self.AIR_DASH_DISTANCE / max(dash_duration, 0.0001)
         
+        # Move horizontally
         self.x += self.air_dash_direction * dash_speed * time_module.dt
         
-        # Still apply some gravity during air dash (reduced)
+        # Apply reduced gravity during dash
         self.vertical_velocity -= GRAVITY * 0.3 * time_module.dt
         self.y += self.vertical_velocity * time_module.dt
+        
+        # Decrement timer and end dash when expired
+        try:
+            self.air_dash_timer = max(0.0, self.air_dash_timer - time_module.dt)
+            if self.air_dash_timer <= 0:
+                self.is_air_dashing = False
+        except Exception:
+            # If timer tracking fails, end dash conservatively
+            self.is_air_dashing = False
         
         # Ground check
         if self.y <= 1:
@@ -228,10 +247,6 @@ class AerialFighter(Fighter):
             self.vertical_velocity = 0
             self.grounded = True
             self.is_air_dashing = False
-        
-        # Air dash timer would need to be tracked separately
-        # For now, end dash when vertical input changes or after very short time
-        # This would need proper integration with controller input
 
     def move_horizontal(self, direction):
         """Override for enhanced air movement"""
