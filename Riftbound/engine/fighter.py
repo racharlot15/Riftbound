@@ -942,7 +942,7 @@ class Fighter(Entity):
 
     def get_info(self):
         """Return dict of current fighter state for debugging/UI"""
-        return {
+        info = {
             'name': self.fighter_name,
             'state': self.state,
             'health': self.health,
@@ -952,6 +952,52 @@ class Fighter(Entity):
             'attack': self.attack_name,
             'combo': self.combo_count
         }
+        return info
+
+    def reset_for_match(self):
+        """Reset internal fighter state for a new match/round."""
+        try:
+            self.health = getattr(self, 'max_health', 100)
+        except Exception:
+            self.health = 100
+        self.state = 'IDLE'
+        self.attack_name = None
+        self.attack_timer = 0
+        self.attack_hit = False
+        self.attack_buffer_timer = 0
+        self.buffered_attack = None
+        self.hitstun_timer = 0
+        self.knockback_velocity = 0
+        self.combo_count = 0
+        self.combo_timer = 0
+        self.combo_hit_index = 0
+        self.vertical_velocity = 0
+        self.grounded = True
+        try:
+            self.jumps_used = 0
+        except Exception:
+            pass
+        try:
+            self.air_attacks_used = 0
+        except Exception:
+            pass
+        self._attack_active_started = False
+        try:
+            self.heavy_cooldown_timer = 0.0
+            self.launcher_cooldown_timer = 0.0
+        except Exception:
+            pass
+        self.last_animation = None
+        # reset visuals
+        try:
+            if getattr(self, 'health_bar', None):
+                try:
+                    self.health_bar.reset()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
 
     def clamp_to_arena(self, arena_width):
         """Keep fighter within arena boundaries and apply a small elastic bounce when hitting walls.

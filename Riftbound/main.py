@@ -104,6 +104,12 @@ debug_hud = None
 game_running = True
 paused = False
 
+# Match state
+match_active = True
+result_text = None
+initial_player_pos = None
+initial_enemy_pos = None
+
 # Lightweight deterministic CPU state. This keeps the prototype playable
 # while a full behavior-tree AI remains out of scope.
 enemy_ai_timer = 0.0
@@ -158,6 +164,18 @@ def initialize_game():
     player.health_bar = HealthBar((-0.55, 0.42))
     enemy.health_bar = HealthBar((0.55, 0.42))
     
+    # Remember initial positions for rematch resets
+    global initial_player_pos, initial_enemy_pos, match_active
+    try:
+        initial_player_pos = (player.x, player.y, getattr(player, 'z', 0))
+    except Exception:
+        initial_player_pos = (-5, 1, 0)
+    try:
+        initial_enemy_pos = (enemy.x, enemy.y, getattr(enemy, 'z', 0))
+    except Exception:
+        initial_enemy_pos = (5, 1, 0)
+    match_active = True
+
     # Create debug HUD
     debug_hud = DebugHUD()
     
@@ -290,7 +308,7 @@ def update():
     Handles input processing, game logic, and state updates.
     """
     
-    global paused
+    global paused, match_active, result_text
 
     # Feedback uses unscaled time so hitstop never makes shaking or the
     # freeze-frame timer feel delayed after a successful hit.
@@ -311,6 +329,11 @@ def update():
 
     # Don't process game logic when paused
     if paused:
+        return
+
+    # If the match is over, skip game logic (input handler still receives keys for rematch)
+    global match_active
+    if not match_active:
         return
 
     # Record previous horizontal positions for collision/bounce calculation
@@ -467,6 +490,29 @@ def update():
         debug_hud.update_fps(1.0 / max(time.dt_unscaled, 1e-6))
 
     # --------------------------------------------------------
+    # MATCH END CHECK
+    # --------------------------------------------------------
+
+    try:
+        if match_active:
+            if player is not None and player.state == 'KO':
+                match_active = False
+                winner = getattr(enemy, 'fighter_name', 'Enemy')
+                try:
+                    result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
+                except Exception:
+                    result_text = None
+            elif enemy is not None and enemy.state == 'KO':
+                match_active = False
+                winner = getattr(player, 'fighter_name', 'Player')
+                try:
+                    result_text = Text(f"{winner} wins! Press ENTER to rematch or ESC to return to menu", parent=camera.ui, position=(0, 0.1), origin=(0, 0), scale=1.2)
+                except Exception:
+                    result_text = None
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
     # STORE INPUT STATE FOR NEXT FRAME
     # --------------------------------------------------------
 
@@ -483,7 +529,7 @@ def input(key):
     Called automatically by Ursina when keys are pressed.
     """
     
-    global paused
+    global paused, match_active, result_text
     
     # Handle key releases (Ursina sends 'key up')
     if isinstance(key, str) and key.endswith(' up'):
@@ -494,6 +540,22 @@ def input(key):
     
     # Pause toggle
     if key == 'escape':
+        # If match ended, treat ESC as return-to-menu (simple behavior: restart match and pause as menu)
+        if not match_active:
+            # destroy result text and return to menu state (for now, just rematch reset and pause)
+            try:
+                if result_text is not None:
+                    result_text.enabled = False
+            except Exception:
+                pass
+            # keep paused state but reset match_active so user can choose
+            match_active = True
+            # call reset to ensure UI consistent
+            try:
+                reset_match()
+            except Exception:
+                pass
+            return
         paused = not paused
         print(f"Game {'PAUSED' if paused else 'RESUMED'}")
         return
@@ -506,6 +568,14 @@ def input(key):
     if key == 'space':
         player.try_jump()
     
+    # Rematch on Enter when match is over
+    if key == 'enter' and not match_active:
+        try:
+            reset_match()
+        except Exception:
+            pass
+        return
+
     # Crouch (press and hold 's')
     if key == 's':
         if hasattr(player, 'start_crouch'):
@@ -535,6 +605,56 @@ def input(key):
 
     if key == 'x':
         _use_character_special(player, enemy)
+
+
+# ============================================================
+# MATCH / REMATCH HELPERS
+# ============================================================
+
+def reset_match():
+    """Reset both fighters and UI for a new round/match."""
+    global player, enemy, initial_player_pos, initial_enemy_pos, match_active, result_text
+    try:
+        # Reposition fighters to their initial spots
+        if player is not None and initial_player_pos is not None:
+            try:
+                player.x, player.y, player.z = initial_player_pos
+            except Exception:
+                try:
+                    player.position = initial_player_pos
+                except Exception:
+                    pass
+        if enemy is not None and initial_enemy_pos is not None:
+            try:
+                enemy.x, enemy.y, enemy.z = initial_enemy_pos
+            except Exception:
+                try:
+                    enemy.position = initial_enemy_pos
+                except Exception:
+                    pass
+        # Reset fighter internal state
+        try:
+            if player is not None:
+                player.reset_for_match()
+        except Exception:
+            pass
+        try:
+            if enemy is not None:
+                enemy.reset_for_match()
+        except Exception:
+            pass
+        # Clear result UI
+        try:
+            if result_text is not None:
+                result_text.enabled = False
+                result_text = None
+        except Exception:
+            pass
+        # Reactivate match
+        match_active = True
+        print("↺ Match reset — ready to rematch")
+    except Exception:
+        pass
 
 
 # ============================================================
