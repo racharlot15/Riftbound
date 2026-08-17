@@ -421,6 +421,63 @@ class Fighter(Entity):
             except Exception:
                 pass
 
+        # Lenient chaining: if player buffered a legal chain input, allow it to trigger mid-attack
+        # so players don't need frame-perfect timing to continue the Magic Series.
+        try:
+            from .combat import can_chain, ATTACKS as ATTACK_DB, HEAVY_COOLDOWN, LAUNCHER_COOLDOWN
+            if self.buffered_attack and self.attack_buffer_timer > 0 and can_chain(self.attack_name, self.buffered_attack):
+                next_attack = self.buffered_attack
+                # enforce cooldowns: if on cooldown, keep buffering instead of dropping
+                if next_attack == 'HEAVY' and getattr(self, 'heavy_cooldown_timer', 0) > 0:
+                    # leave buffer in place
+                    pass
+                elif next_attack == 'LAUNCHER' and getattr(self, 'launcher_cooldown_timer', 0) > 0:
+                    pass
+                else:
+                    # consume buffer and perform chain just like start_attack did
+                    self.buffered_attack = None
+                    self.attack_name = next_attack
+                    # set timer to startup so active comes immediately (matches chain behavior)
+                    try:
+                        startup = ATTACK_DB.get(next_attack, {}).get('startup', 0)
+                        self.attack_timer = startup
+                    except Exception:
+                        self.attack_timer = 0
+                    self.attack_hit = False
+                    print(f"  ➜ {self.fighter_name} lenient-chain into: {next_attack}")
+                    # play actor/animator if available
+                    try:
+                        if getattr(self, 'actor', None) and getattr(self, 'animation_clips', None):
+                            clip = self.animation_clips.get(f"ATTACK_{next_attack}")
+                            if clip:
+                                try:
+                                    self.actor.play(clip)
+                                except Exception:
+                                    pass
+                        elif getattr(self, 'animator', None):
+                            mapping = {'LIGHT': 'ATTACK_LIGHT', 'MEDIUM': 'ATTACK_MEDIUM', 'HEAVY': 'ATTACK_HEAVY', 'LAUNCHER': 'ATTACK_LAUNCHER'}
+                            mapped = mapping.get(next_attack)
+                            if mapped:
+                                try:
+                                    self.animator.play(mapped)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    # chained override for shorter active/recovery
+                    try:
+                        orig = ATTACK_DB.get(next_attack, {})
+                        factor = 0.5
+                        self._chained_attack_override = {'attack': next_attack, 'active': orig.get('active', 0) * factor, 'recovery': orig.get('recovery', 0) * factor}
+                        if next_attack == 'HEAVY':
+                            self.heavy_cooldown_timer = HEAVY_COOLDOWN
+                        if next_attack == 'LAUNCHER':
+                            self.launcher_cooldown_timer = LAUNCHER_COOLDOWN
+                    except Exception:
+                        self._chained_attack_override = None
+        except Exception:
+            pass
+
         active_end = startup + active
         recovery_end = active_end + recovery
 

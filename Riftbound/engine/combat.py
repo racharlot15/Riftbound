@@ -64,7 +64,7 @@ MIN_BLOCK_DAMAGE = 1           # Minimum damage even when blocking
 COMBO_DECAY_TIME = 1.0         # Seconds before combo counter resets (faster chains)
 
 # Attack buffering / canceling
-ATTACK_BUFFER_TIME = 0.12      # Seconds to buffer an attack input while busy
+ATTACK_BUFFER_TIME = 0.25      # Seconds to buffer an attack input while busy (increased for lenient combo timing)
 CANCEL_EARLY_WINDOW = 0.03     # Allow very short early cancels into next attack
 
 # Global multipliers to shorten timings for faster MvC-style feel
