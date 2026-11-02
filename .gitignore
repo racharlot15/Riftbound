@@ -8,3 +8,6 @@ assets/*.pyc
 # Other OS files
 Thumbs.db
 .DS_Store
+
+# Baked GLBs (regenerate with tools/blender/bake_assets.py; game loads packed .glb.txt)
+web/rift-descent/assets/*.glb
